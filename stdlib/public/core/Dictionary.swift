@@ -2189,7 +2189,7 @@ extension Dictionary {
   /// guaranteed to compare equal with `==`, but not all equal dictionaries are
   /// considered identical.
   ///
-  /// - Performance: O(1)
+  /// - Complexity: O(1)
   @_alwaysEmitIntoClient
   public func isTriviallyIdentical(to other: Self) -> Bool {
 #if _runtime(_ObjC)

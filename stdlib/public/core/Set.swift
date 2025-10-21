@@ -1691,7 +1691,7 @@ extension Set {
   /// storage object. Therefore, identical sets are guaranteed to compare equal
   /// with `==`, but not all equal sets are considered identical.
   ///
-  /// - Performance: O(1)
+  /// - Complexity: O(1)
   @_alwaysEmitIntoClient
   public func isTriviallyIdentical(to other: Self) -> Bool {
 #if _runtime(_ObjC)
