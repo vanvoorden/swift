@@ -110,6 +110,7 @@ set(SWIFT_BENCH_MODULES
     single-source/IndexPathTest
     single-source/InsertCharacter
     single-source/IntegerParsing
+    single-source/IntegerToString
     single-source/Integrate
     single-source/IterateData
     single-source/Join
@@ -140,6 +141,7 @@ set(SWIFT_BENCH_MODULES
     single-source/ObserverUnappliedMethod
     single-source/OpaqueConsumingUsers
     single-source/OpenClose
+    single-source/ParameterPacks
     single-source/Phonebook
     single-source/PointerArithmetics
     single-source/PolymorphicCalls
