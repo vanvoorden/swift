@@ -605,32 +605,83 @@ static bool isAsyncLetBeginPartialApply(PartialApplyInst *pai) {
   return *kind == BuiltinValueKind::StartAsyncLetWithLocalBuffer;
 }
 
+// The different kinds of instructions that use a closure value without
+// changing which closure it represents, e.g. as part of converting an
+// escaping closure to a non-escaping one, or adjusting its abstraction
+// level.
+enum class ClosureUseKind {
+  /// Not a closure use instruction that we look through.
+  Unsupported,
+  /// A thunk partial_apply that just forwards its single captured
+  /// argument.
+  Thunk,
+  /// A `convert_function`.
+  FunctionConversion,
+  /// A `convert_escape_to_noescape`.
+  EscapeToNoEscape,
+};
+
+static ClosureUseKind classifyClosureWrapper(SILInstruction *inst) {
+  if (!inst)
+    return ClosureUseKind::Unsupported;
+
+  if (auto *pai = dyn_cast<PartialApplyInst>(inst)) {
+    auto *calleeFn = pai->getCalleeFunction();
+    if (calleeFn && calleeFn->isThunk())
+      return ClosureUseKind::Thunk;
+    return ClosureUseKind::Unsupported;
+  }
+
+  if (isa<ConvertFunctionInst>(inst))
+    return ClosureUseKind::FunctionConversion;
+
+  if (isa<ConvertEscapeToNoEscapeInst>(inst))
+    return ClosureUseKind::EscapeToNoEscape;
+
+  return ClosureUseKind::Unsupported;
+}
+
 // Determine whether this partial application is only used as a non-escaping
 // value i.e. a closure that is passed to a non-escaping parameter.
 static bool isNoEscapePartialApply(PartialApplyInst *pai) {
   SILValue value = pai;
-  while (true) {
-    // Look through re-abstraction and other thunks
-    if (auto *use = value->getSingleUse()) {
-      if (auto *maybeThunk = dyn_cast<PartialApplyInst>(use->getUser())) {
-        if (auto *fas = maybeThunk->getCalleeFunction();
-            fas && fas->isThunk()) {
-          value = maybeThunk;
-          continue;
-        }
-      }
-
-      // Look through function conversions
-      if (auto *cfi = dyn_cast<ConvertFunctionInst>(use->getUser())) {
-        value = cfi;
-        continue;
-      }
-
-      return isa<ConvertEscapeToNoEscapeInst>(use->getUser());
+  while (auto *use = value->getSingleUse()) {
+    auto *user = use->getUser();
+    switch (classifyClosureWrapper(user)) {
+    case ClosureUseKind::Thunk:
+    case ClosureUseKind::FunctionConversion:
+      value = cast<SingleValueInstruction>(user);
+      continue;
+    case ClosureUseKind::EscapeToNoEscape:
+      return true;
+    case ClosureUseKind::Unsupported:
+      return false;
     }
-
-    return false;
   }
+
+  return false;
+}
+
+/// Given a value that could be a closure, attempt to walk up through its
+/// uses and get a `partial_apply` that forms it.
+static PartialApplyInst *getUnderlyingPartialApply(SILValue closure) {
+  auto tryLookthroughClosureUse = [](SILValue value) {
+    auto *inst = value->getDefiningInstruction();
+    switch (classifyClosureWrapper(inst)) {
+    case ClosureUseKind::Thunk:
+      return cast<PartialApplyInst>(inst)->getArgument(0);
+    case ClosureUseKind::FunctionConversion:
+    case ClosureUseKind::EscapeToNoEscape:
+      return cast<SingleValueInstruction>(inst)->getOperand(0);
+    case ClosureUseKind::Unsupported:
+      return SILValue();
+    }
+  };
+
+  while (SILValue unwrapped = tryLookthroughClosureUse(closure))
+    closure = unwrapped;
+
+  return dyn_cast<PartialApplyInst>(closure);
 }
 
 /// Returns true if this is a function argument that is able to be sent in the
@@ -2313,33 +2364,8 @@ class PartitionOpTranslator {
   /// body of the closure.
   void tryUndoSendOfValuesCapturedByNonescapingCalledOnceClosure(
       Operand *calledOnceArgument) {
-    auto closure = calledOnceArgument->get();
-
     // Dig up partial_apply that represents the closure.
-    while (true) {
-      SILValue tmp = closure;
-
-      // Look through conversions
-      if (isa<ConvertEscapeToNoEscapeInst>(tmp) ||
-          isa<ConvertFunctionInst>(tmp)) {
-        tmp = cast<SingleValueInstruction>(tmp)->getOperand(0);
-      }
-
-      // Look through re-abstraction thunks
-      if (auto *pai = dyn_cast<PartialApplyInst>(tmp)) {
-        if (auto *calleeFn = pai->getCalleeFunction()) {
-          if (calleeFn->isThunk())
-            tmp = pai->getArgument(0);
-        }
-      }
-
-      if (closure == tmp)
-        break;
-
-      closure = tmp;
-    }
-
-    auto *pai = dyn_cast<PartialApplyInst>(closure);
+    auto *pai = getUnderlyingPartialApply(calledOnceArgument->get());
     if (!pai || !pai->isCalledOnce())
       return;
 
