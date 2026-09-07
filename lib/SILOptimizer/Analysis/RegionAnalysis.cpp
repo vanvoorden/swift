@@ -5098,6 +5098,10 @@ struct SendQueryEvaluator final
 bool RegionAnalysisFunctionInfo::wasValueEverSent(SILValue value) {
   assert(supportedFunction && "Unsupported Function?!");
 
+  // First, check if the answer is already known for this value.
+  if (auto iter = sentValuesCache.find(value); iter != sentValuesCache.end())
+    return iter->second;
+
   auto trackableValue = getValueMap().getTrackableValue(value);
   if (trackableValue.value.isSendable())
     return false;
@@ -5114,12 +5118,13 @@ bool RegionAnalysisFunctionInfo::wasValueEverSent(SILValue value) {
 
     for (auto &partitionOp : blockState.getPartitionOps()) {
       eval.apply(partitionOp);
-      if (workingPartition.isSent(elt))
-        return true;
+      if (workingPartition.isSent(elt)) {
+        return sentValuesCache[value] = true;
+      }
     }
   }
 
-  return false;
+  return sentValuesCache[value] = false;
 }
 
 void RegionAnalysisFunctionInfo::runDataflow() {
